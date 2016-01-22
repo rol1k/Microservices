@@ -1,0 +1,11 @@
+{
+	"autoload": {
+		"psr-0": {
+			"Microservices": "src"
+		}
+	},
+	"require": {
+		"cboden/ratchet": "*",
+		"react/zmq": "*"
+	}
+}
