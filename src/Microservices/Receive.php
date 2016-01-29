@@ -3,7 +3,7 @@ namespace Microservices;
 use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
 
-class Writer implements MessageComponentInterface {
+class Receive implements MessageComponentInterface {
 	protected $clients;
 	private $push;
 
@@ -26,7 +26,7 @@ class Writer implements MessageComponentInterface {
 
 		// добавление даты к сообщению
 		$msg = json_decode($msg);
-		$msg->date = date('d.m.Y H:i:s');
+		$msg->time = date('d.m.Y H:i:s');
 		$msg = json_encode($msg);
 
 		// foreach ($this->clients as $client) {
