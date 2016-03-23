@@ -15,7 +15,7 @@ $context = new React\ZMQ\Context($loop);
 
 $req = $context->getSocket(\ZMQ::SOCKET_REQ);
 $req->connect('tcp://' . $argv[1]);
-$req->send('gettopologypub|');
+$req->send('get_topology_pub|');
 
 $sub = $context->getSocket(\ZMQ::SOCKET_SUB);
 // $sub->subscribe('DB');
@@ -27,10 +27,10 @@ $req->on('message', function ($address) use ($loop, $sub, $req, $argv){
 	list($action,$address) = explode('|', $address, 2);
 	$address = json_decode($address);
 
-	if('gettopologypub' == $action) {
+	if('get_topology_pub' == $action) {
 		$sub->connect('tcp://'.$address);
 		$loop->addTimer(1, function() use ($req, $argv){
-			$req->send("addnode|".LINK."|{$argv[2]}");
+			$req->send("add_node|".LINK."|{$argv[2]}");
 		});
 	}
 });

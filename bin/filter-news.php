@@ -3,9 +3,11 @@
 // Проверяет на стоп-слова
 // argv[1] - адрес Network Topology
 // argv[2] - собственный адрес tcp
-// Пример вызова: php filter-news.php 127.0.0.1:5500 127.0.0.1:5540
+// argv[3] - адрес Network Topology Router
+// Пример вызова: php filter-news.php 127.0.0.1:5500 127.0.0.1:5540 127.0.0.1:5502
 
 define('LINK', 'NEWS FILTER');
+define('MESSAGE_DELIMITER', '|');
 
 require __DIR__.'/../vendor/autoload.php';
 // $time = new Microservices\Timestamp;
@@ -13,9 +15,9 @@ require __DIR__.'/../vendor/autoload.php';
 $loop = React\EventLoop\Factory::create();
 $context = new React\ZMQ\Context($loop);
 
-$req = $context->getSocket(\ZMQ::SOCKET_REQ);
-$req->connect('tcp://' . $argv[1]);
-$req->send('gettopologypub|');
+$dealer = $context->getSocket(\ZMQ::SOCKET_DEALER);
+$dealer->connect('tcp://' . $argv[3]);
+$dealer->send('get_topology_pub|');
 
 $sub = $context->getSocket(\ZMQ::SOCKET_SUB);
 $sub->subscribe('RATCHET RECEIVE TCP');
@@ -27,14 +29,19 @@ $pub->bind('tcp://' . $argv[2]);
 $ratchetReceiveTcpList = new \SplObjectStorage();
 $ratchetPublishTcpList = new \SplObjectStorage();
 
-$req->on('message', function ($address) use ($loop, $sub, $req, $argv){
-	list($action,$address) = explode('|', $address, 2);
+$dealer->on('message', function ($address) use ($loop, $sub, $dealer, $argv){
+	list($action,$address) = explode(MESSAGE_DELIMITER, $address, 2);
 	$address = json_decode($address);
 
-	if('gettopologypub' == $action) {
+	if('get_topology_pub' == $action) {
 		$sub->connect('tcp://'.$address);
-		$loop->addTimer(1, function() use ($req, $argv){
-			$req->send("addnode|".LINK."|{$argv[2]}");
+		$loop->addTimer(1, function() use ($dealer, $argv){
+			$message = [
+				'action' => 'add_node',
+				'cluster' => LINK,
+				'address' => $argv[2]
+			];
+			$dealer->send( implode(MESSAGE_DELIMITER, $message) );
 		});
 	}
 });
@@ -49,7 +56,7 @@ $addressIsset = function($address, $nodeList) {
 };
 
 $sub->on('message', function($msg) use ($context, &$ratchetReceiveTcpList, &$dbCommunicationList, $addressIsset, $pub) {
-	list($linkName, $addresses) = explode('|', $msg, 2);
+	list($linkName, $addresses) = explode(MESSAGE_DELIMITER, $msg, 2);
 	$addresses = json_decode($addresses);
 	if(0 == count($addresses)) {
 		return;
