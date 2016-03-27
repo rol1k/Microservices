@@ -13,35 +13,45 @@ class Topology implements MessageComponentInterface {
 	}
 
 	public function onOpen(ConnectionInterface $conn) {
-		// Store the new connection to send messages to later
 		$this->clients->attach($conn);
-
-		echo "Новое соединение ({$conn->resourceId})", PHP_EOL;
 	}
 
 	public function onMessage(ConnectionInterface $from, $msg) {
 		$numRecv = count($this->clients) - 1;
-		echo sprintf('Connection %d sending message "%s"' . "\n"
-			, $from->resourceId, $msg);
 
-		list($action, $msg) = explode('|', $msg);
+		$msg = json_decode($msg);
 
-		if('getlistnode' == $action) {
-			$msg = json_decode($msg);
-			$listNode = $this->nt->getListNode($msg);
-			$from->send( $action.'|'.json_encode($listNode) );
+		printf('From: user %d. ', $from->resourceId);
+		foreach ($msg as $key => $value) {
+			printf("%s: %s\t", $key, $value);
+		}
+		echo PHP_EOL;
+
+		if('get_list_node' == $msg->action) {
+			$list_node = $this->nt->get_list_node($msg->cluster);
+			$message = [
+				'action' => $msg->action,
+				'cluster' => $msg->cluster,
+				'list_node' => $list_node
+			];
+			$from->send( json_encode($message) );
+		} elseif('get_next_node' == $msg->action) {
+			$next_node = $this->nt->get_next_node($msg->cluster);
+			$message = [
+				'action' => $msg->action,
+				'cluster' => $msg->cluster,
+				'next_node' => $next_node
+			];
+			$from->send( json_encode($message) );
 		}
 	}
 
 	public function onClose(ConnectionInterface $conn) {
-		// The connection is closed, remove it, as we can no longer send it messages
 		$this->clients->detach($conn);
-
-		echo "Соединение ({$conn->resourceId}) закрыто", PHP_EOL;
 	}
 
 	public function onError(ConnectionInterface $conn, \Exception $e) {
-		echo "Ошибка: {$e->getMessage()}", PHP_EOL;
+		echo "Error: {$e->getMessage()}", PHP_EOL;
 
 		$conn->close();
 	}

@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Отправить новость</title>
+
+	<!-- Bootstrap -->
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">
+</head>
+<body>
+	<nav class="navbar navbar-default">
+		<div class="container">
+			<div class="navbar-header">
+				<button type="button" class="navbar-toggle" data-toggle="collapse" data-target="navbar-collapse">
+							<span class="sr-only">Toggle navigation</span>
+							<span class="icon-bar"></span>
+							<span class="icon-bar"></span>
+							<span class="icon-bar"></span>
+						</button>
+				<a class="navbar-brand" href="#">Микросервисы</a>
+			</div>
+
+			<div class="collapse navbar-collapse" id="navbar-collapse">
+				<ul class="nav navbar-nav">
+					<li><a href="read-news.html">Читать новости</a></li>
+					<li class="active"><a href="publish-news.html">Опубликовать новость</a></li>
+				</ul>
+			</div>
+		</div>
+	</nav>
+
+	<div class="container">
+		<div class="row">
+			<div class="col-xs-12">
+				<h1 class="text-center">Опубликовать новость</h1>
+			</div>
+		</div>
+	</div>
+
+<!-- 	<div class="container">
+		<div class="row">
+			<div class="col-xs-12">
+				<div id="alert-success" class="alert alert-success">
+					<button type="button" class="close" data-dismiss="alert" aria-hidden="true">&times;</button>
+					<span id="message-body-success">Успех!</span>
+				</div>
+				<div id="alert-danger" class="alert alert-danger">
+					<button type="button" class="close" data-dismiss="alert" aria-hidden="true">&times;</button>
+					<span id="message-body-danger">Фиаско!</span>
+				</div>
+			</div>
+		</div>
+	</div> -->
+
+	<div class="container">
+		<form name="form-news" method="POST" enctype="multipart/form-data">
+			<div class="form-group">
+				<label class="control-label" for="topic">Рубрика</label>
+				<select class="form-control" id="topic" name="topic" required>
+					<option value="Автомобили">Автомобили</option>
+					<option value="Электроника">Электроника</option>
+					<option value="Медицина">Медицина</option>
+				</select>
+			</div>
+			<div class="form-group">
+				<label class="control-label" for="news">Новость</label>
+				<textarea class="form-control" id="news" name="news" placeholder="Напишите новость" rows="3" required></textarea>
+			</div>
+			<div class="form-group">
+				<label class="control-label" for="image">Изображение</label>
+				<input type="file" class="form-control" id="image" name="image">
+			</div>
+			<div class="form-group">
+				<button id="publishButton" type="button" class="btn btn-primary">Опубликовать</button>
+			</div>
+			<input type="hidden" name="unique_id">
+		</form>
+	</div>
+
+
+	<!-- jQuery -->
+	<script src="https://code.jquery.com/jquery-2.2.0.min.js"></script>
+	<!-- Bootstrap -->
+	<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/js/bootstrap.min.js"></script>
+
+	<script>
+		// $(".alert").alert();
+		// $("#message-body-success").html('Новость опубликована!');
+		// $("#message-body-danger").html('Новость не прошла модерацию!');
+
+		var conTopology, conn, connList, topologyAddress = '127.0.0.1:5520';
+
+		setTopologyConnection(topologyAddress);
+
+		function setTopologyConnection(address) {
+			var conTopology = new WebSocket('ws://'+address);
+			conTopology.onopen = function(e) {
+				console.log("Установленно соединение с topology " + address);
+				var message = {
+					'action': 'get_next_node',
+					'cluster': 'RECEIVE HTTP'
+				};
+				conTopology.send( JSON.stringify(message) );
+
+				if(getCookie('unique_id')) {
+					var message = {
+						'action': 'get_next_node',
+						'cluster': 'RECEIVE WS'
+					};
+					conTopology.send( JSON.stringify(message) );
+				}
+			};
+
+			conTopology.onmessage = function(e) {
+				var msg = JSON.parse(e.data);
+
+				if('RECEIVE HTTP' == msg.cluster) {
+					if(msg.next_node) {
+						document.forms['form-news'].action = 'http://' + msg.next_node + '/send';
+						console.log('Set form action to ' + document.forms['form-news'].action);
+						// setConnection(address, 5000);
+					} else {
+						console.log('Нет работающих серверов http');
+					}
+				} else if('RECEIVE WS' == msg.cluster) {
+					if(msg.next_node) {
+						setConnection(msg.next_node);
+
+					} else {
+						console.log('Нет работающих серверов ws');
+					}
+				}
+			};
+
+			conTopology.onclose = function(e) {
+				console.log('Разорвано соединение с topology');
+			};
+		}
+
+		function setConnection(address) {
+			var conn = new WebSocket('ws://' + address);
+			conn.onopen = function(e) {
+				console.log("Установленно соединение с обработчиком новостей " + address);
+				var message = {
+					'id': getCookie('unique_id')
+				};
+				conn.send( JSON.stringify(message) );
+				deleteCookie('unique_id');
+			};
+
+			conn.onmessage = function(e) {
+				console.log(e.data);
+			};
+
+			conn.onerror = function(e) {
+				console.log('Соединение с обработчиком новостей не установлено');
+			}
+
+			// conn.onclose = function(e) {
+			// 	console.log('Соединение не установлено. Переподключение через '+timeout/1000+' сек.');
+			// }
+		}
+
+		publishButton.addEventListener('click', publishNews);
+
+		function publishNews() {
+			var form = document.forms['form-news'];
+			if(form.action) {
+				var unique_id = guid();
+				form.elements['unique_id'].value = unique_id;
+				setCookie('unique_id', unique_id, {'expires': 5*60});
+				form.submit();
+			} else {
+				console.log('Не могу отправить данные. Не установлен обработчик формы');
+				return;
+			}
+		}
+
+		function guid() {
+			return s4() + s4() + '-' + s4() + '-' + s4() + '-' + s4() + '-' + s4() + s4() + s4();
+		}
+
+		function s4() {
+			return Math.floor((1 + Math.random()) * 0x10000).toString(16).substring(1);
+		}
+
+		function setCookie(name, value, options) {
+			options = options || {};
+
+			var expires = options.expires;
+
+			if (typeof expires == "number" && expires) {
+				var d = new Date();
+				d.setTime(d.getTime() + expires * 1000);
+				expires = options.expires = d;
+			}
+			if (expires && expires.toUTCString) {
+				options.expires = expires.toUTCString();
+			}
+
+			value = encodeURIComponent(value);
+
+			var updatedCookie = name + "=" + value;
+
+			for (var propName in options) {
+				updatedCookie += "; " + propName;
+				var propValue = options[propName];
+				if (propValue !== true) {
+					updatedCookie += "=" + propValue;
+				}
+			}
+
+			document.cookie = updatedCookie;
+		}
+
+		function getCookie(name) {
+			var matches = document.cookie.match(new RegExp(
+				"(?:^|; )" + name.replace(/([\.$?*|{}\(\)\[\]\\\/\+^])/g, '\\$1') + "=([^;]*)"
+			));
+			return matches ? decodeURIComponent(matches[1]) : undefined;
+		}
+
+		function deleteCookie(name) {
+			setCookie(name, "", {
+				expires: -1
+			})
+		}
+
+		// function publishNews() {
+		// 	var newsTopic = getTopics(topic);
+
+		// 	var newsText = getNewsText(news);
+
+		// 	var message = {
+		// 		'topics': newsTopic,
+		// 		'news': newsText
+		// 	};
+
+		// 	console.log('Отправил новость: %o', message);
+
+		// 	conn.send( JSON.stringify(message) );
+		// }
+
+		// function getTopics(select) {
+		// 	var selectedTopics = [];
+		// 	for (var i = 0; i < select.options.length; i++) {
+		// 		var option = select.options[i];
+		// 		if(option.selected) {
+		// 			selectedTopics.push(option.value);
+		// 		}
+		// 	}
+		// 	return selectedTopics;
+		// }
+
+		// function getNewsText(textarea) {
+		// 	return textarea.value;
+		// }
+	</script>
+</body>
+</html>

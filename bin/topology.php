@@ -1,141 +1,88 @@
 <?php
 // Управляет топологией сети
+// Пример вызова: php bin/topology.php
 
 define('TOPOLOGY_ADDRESS', '127.0.0.1:5500');
-define('TOPOLOGY_WS_ADDRESS', '127.0.0.1:8090');
-define('TOPOLOGY_PUB_ADDRESS', '127.0.0.1:5501');
-define('TOPOLOGY_ROUTER_ADDRESS', '127.0.0.1:5502');
+define('TOPOLOGY_WS_ADDRESS', '127.0.0.1:5520');
+define('TOPOLOGY_PUB_ADDRESS', '127.0.0.1:5510');
 define('MESSAGE_DELIMITER', '|');
 
 require __DIR__.'/../vendor/autoload.php';
 
 $nt = new Microservices\NetworkTopology;
-$nt->addLink('DB', 'База данных');
-$nt->addLink('DB COMMUNICATION', 'Взайимодействие с базой данных');
-$nt->addLink('RATCHET RECEIVE WS', 'Получает новости');
-$nt->addLink('RATCHET RECEIVE TCP', 'Передаёт новости на модерацию');
-$nt->addLink('NEWS FILTER', 'Проверка новостей на стоп-слова');
-$nt->addLink('RATCHET PUBLISH WS', 'Публикует новости');
+$nt->add_cluster('RECEIVE WS', 'Уведомляет пользователя о статусе новости');
+$nt->add_cluster('RECEIVE HTTP', 'Получает новость от пользователя');
+$nt->add_cluster('PUBLISH WS', 'Публикует новость');
+$nt->add_cluster('PUBLISH TCP', 'Получает проверенную новость');
+$nt->add_cluster('IMAGE HANDLER TCP', 'Обрабатывает изображение');
+$nt->add_cluster('TEXT HANDLER TCP', 'Проверяет новость на стоп-слова');
 
 $loop = React\EventLoop\Factory::create();
 $context = new React\ZMQ\Context($loop);
-
-$rep = $context->getSocket(ZMQ::SOCKET_REP);
-$rep->bind('tcp://' . TOPOLOGY_ADDRESS);
 
 $pub = $context->getSocket(ZMQ::SOCKET_PUB);
 $pub->bind('tcp://' . TOPOLOGY_PUB_ADDRESS);
 
 $router = $context->getSocket(ZMQ::SOCKET_ROUTER);
-$router->bind('tcp://' . TOPOLOGY_ROUTER_ADDRESS);
+$router->bind('tcp://' . TOPOLOGY_ADDRESS);
 
-$add_node = function($action, $linkName, $address, $from) use ($router, $pub, $nt) {
-	if(false === $nt->addNode($linkName, $address)) {
-		$response = 'Адрес не добавлен';
+$add_node = function($action, $cluster, $address, $from) use ($router, $pub, $nt) {
+	if(false === $nt->add_node($cluster, $address)) {
+		$message = [
+			'action' => $action,
+			'error' => true,
+			'error_message' => 'Адрес не добавлен'
+		];
 	} else {
-		$response = 'Адрес добавлен';
+		$message = [
+			'action' => $action,
+			'error' => false,
+			'error_message' => null
+		];
 	}
 
-	$message = [
-		'action' => $action,
-		'response' => json_encode($response)
-	];
-	$router->send( [$from, implode(MESSAGE_DELIMITER, $message)] );
+	$router->send( [$from, json_encode($message)] );
 
-	if ($linksName = $nt->getLinksName()) {
-		foreach ($linksName as $linkName) {
+	// !! TODO: Проверить условие, кажется что работает не правильно
+	if ($clusters = $nt->get_clusters_name()) {
+		foreach ($clusters as $cluster) {
 			$message = [
-				'cluster' => $linkName,
-				'cluster_list' => json_encode($nt->getListNode($linkName))
+				'cluster' => $cluster,
+				'list_node' => $nt->get_list_node($cluster)
 			];
-			$pub->send( implode(MESSAGE_DELIMITER, $message) );
+			$pub->send( json_encode($message) );
 		}
 	}
 };
 
 $get_topology_pub = function($action, $from) use ($router) {
-	$response = TOPOLOGY_PUB_ADDRESS;
 	$message = [
 		'action' => $action,
-		'response' => json_encode($response)
+		'address' => TOPOLOGY_PUB_ADDRESS
 	];
-	$router->send( [$from, implode(MESSAGE_DELIMITER, $message)] );
+	$router->send( [$from, json_encode($message)] );
 };
 
 $router->on('messages', function ($msg) use ($loop, $router, $add_node, $get_topology_pub) {
-	$loop->addTimer(0, function() use ($router, $msg, $add_node, $get_topology_pub) {
-		$from = $msg[0];
-		echo $msg[1], PHP_EOL;
-		list($action, $msg) = explode(MESSAGE_DELIMITER, $msg[1], 2);
-		$action = strtolower($action);
+	$from = $msg[0];
+	$msg = json_decode($msg[1]);
 
-		if('add_node' == $action) {
-			list($linkName, $address) = explode(MESSAGE_DELIMITER, $msg);
-			$add_node($action, strtoupper($linkName), $address, $from);
-		} elseif('get_topology_pub' == $action) {
-			$get_topology_pub($action, $from);
-		} else {
-			$message = [
-				'action' => $action,
-				'error' => json_encode("Действие {$action} не найдено")
-			];
-			$router->send( [$from, implode(MESSAGE_DELIMITER, $message)] );
-		}
-	});
-});
-
-$rep->on('message', function ($msg) use ($loop, $rep) {
-	$loop->addTimer(0, function() use ($rep, $msg) {
-		// printf('%s %s %s', $action, $linkName, $address);
-		echo $msg, PHP_EOL;
-		list($action, $msg) = explode(MESSAGE_DELIMITER, $msg, 2);
-		$action = strtolower($action);
-
-		if('add_node' == $action) {
-			list($linkName, $address) = explode(MESSAGE_DELIMITER, $msg);
-			$rep->emit('add_node', array($action, strtoupper($linkName), $address));
-		} elseif('get_topology_pub' == $action) {
-			$rep->emit('get_topology_pub', array($action));
-		} else {
-			$message = [
-				'action' => $action,
-				'error' => json_encode("Действие {$action} не найдено")
-			];
-			$rep->send( implode(MESSAGE_DELIMITER, $message) );
-		}
-	});
-});
-
-$rep->on('get_topology_pub', function($action) use ($rep){
-	$response = TOPOLOGY_PUB_ADDRESS;
-	$message = [
-		'action' => $action,
-		'response' => json_encode($response)
-	];
-	$rep->send( implode(MESSAGE_DELIMITER, $message) );
-});
-
-$rep->on('add_node', function($action, $linkName, $address) use ($rep, $pub, $nt){
-	if(false === $nt->addNode($linkName, $address)) {
-		$response = 'Адрес не добавлен';
-	} else {
-		$response = 'Адрес добавлен';
+	printf('From: node %s. ', $from);
+	foreach ($msg as $key => $value) {
+		printf("%s: %s\t", $key, $value);
 	}
+	echo PHP_EOL;
 
-	$message = [
-		'action' => $action,
-		'response' => json_encode($response)
-	];
-	$rep->send( implode(MESSAGE_DELIMITER, $message) );
-
-	if ($linksName = $nt->getLinksName()) {
-		foreach ($linksName as $linkName) {
-			$message = [
-				'cluster' => $linkName,
-				'cluster_list' => json_encode($nt->getListNode($linkName))
-			];
-			$pub->send( implode(MESSAGE_DELIMITER, $message) );
-		}
+	if('add_node' == $msg->action) {
+		$add_node($msg->action, $msg->cluster, $msg->address, $from);
+	} elseif('get_topology_pub' == $msg->action) {
+		$get_topology_pub($msg->action, $from);
+	} else {
+		$message = [
+			'action' => $msg->action,
+			'error' => "Действие {$msg->action} не найдено"
+		];
+		$router->send( [$from, json_encode($message)] );
 	}
 });
 

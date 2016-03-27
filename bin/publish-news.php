@@ -3,8 +3,7 @@
 // Пересылает Пользователям
 // argv[1] - адрес Network Topology
 // argv[2] - собственный адрес WS
-// argv[3] - адрес Network Topology Router
-// Пример вызова: php publish-news.php 127.0.0.1:5500 127.0.0.1:8083 127.0.0.1:5502
+// Пример вызова: php bin/publish-news.php 127.0.0.1:5500 127.0.0.1:5910
 
 require __DIR__.'/../vendor/autoload.php';
 
@@ -20,7 +19,7 @@ $pusher = new Microservices\Pusher;
 $context = new React\ZMQ\Context($loop);
 
 $dealer = $context->getSocket(\ZMQ::SOCKET_DEALER);
-$dealer->connect('tcp://' . $argv[3]);
+$dealer->connect('tcp://' . $argv[1]);
 $dealer->send('get_topology_pub' . MESSAGE_DELIMITER);
 
 $subTopology = $context->getSocket(\ZMQ::SOCKET_SUB);
