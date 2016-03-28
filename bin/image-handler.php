@@ -2,7 +2,8 @@
 // Сохраняет изображения.
 // argv[1] - адрес Network Topology
 // argv[2] - собственный адрес tcp
-// Пример вызова: php bin/image-handler.php 127.0.0.1:5500 127.0.0.1:5700
+// argv[3] - адрес http сервера
+// Пример вызова: php bin/image-handler.php 127.0.0.1:5500 127.0.0.1:5700  127.0.0.1:5400
 
 define('MESSAGE_DELIMITER', '|');
 define('POST_MESSAGE_DELIMITER', 'delimiter');
@@ -36,7 +37,7 @@ $topology->on('message', function ($msg) use ($loop, $argv, $topology) {
 	}
 });
 
-$image_handler->on('messages', function($msg) use (&$images, $images_folder, $loop, $image_handler) {
+$image_handler->on('messages', function($msg) use (&$images, $images_folder, $loop, $image_handler, $argv) {
 	$from = $msg[0];
 	$msg = explode(POST_MESSAGE_DELIMITER, $msg[1]);
 	$message_type = array_shift($msg);
@@ -47,24 +48,35 @@ $image_handler->on('messages', function($msg) use (&$images, $images_folder, $lo
 		$image_type = strrev(explode('.', strrev($original_name), 2)[0]);
 		$image_name = uniqid() . '.' . $image_type;
 		$images_path = $images_folder . $image_name;
-		$images[$id]['stream'] = new \React\Stream\Stream(fopen($images_path, 'w'), $loop);
-		$images[$id]['name'] = $image_name;
+		$resource = fopen($images_path, 'w');
+		if($resource) {
+			$images[$id]['stream'] = new \React\Stream\Stream($resource, $loop);
+			$images[$id]['name'] = $image_name;
+		}
 	} elseif('chunk' == $message_type) {
 		// запись данных в поток
 		list($id, $data) = $msg;
-		$images[$id]['stream']->write($data);
+		if(isset($images[$id])) {
+			$images[$id]['stream']->write($data);
+		}
 	} elseif('end' == $message_type) {
 		// закрыть поток
 		list($id) = $msg;
-		$images[$id]['stream']->end();
-		$message = [
-			'id' => $id,
-			'error' => false,
-			'path' => '127.0.0.1:5400/images/'.$images[$id]['name']
-		];
-		sleep(3);
+		if(isset($images[$id])) {
+			$images[$id]['stream']->end();
+			$message = [
+				'id' => $id,
+				'error' => false,
+				'path' => $argv[3].'/images/'.$images[$id]['name']
+			];
+			unset($images[$id]);
+		} else {
+			$message = [
+				'id' => $id,
+				'error' => true
+			];
+		}
 		$image_handler->send([$from, json_encode($message)]);
-		unset($images[$id]);
 	}
 });
 

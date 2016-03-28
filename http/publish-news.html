@@ -119,14 +119,12 @@
 					if(msg.next_node) {
 						document.forms['form-news'].action = 'http://' + msg.next_node + '/send';
 						console.log('Set form action to ' + document.forms['form-news'].action);
-						// setConnection(address, 5000);
 					} else {
 						console.log('Нет работающих серверов http');
 					}
 				} else if('RECEIVE WS' == msg.cluster) {
 					if(msg.next_node) {
 						setConnection(msg.next_node);
-
 					} else {
 						console.log('Нет работающих серверов ws');
 					}
@@ -150,16 +148,20 @@
 			};
 
 			conn.onmessage = function(e) {
-				console.log(e.data);
+				var msg = JSON.parse(e.data);
+				console.log(msg);
+				// for(var index in msg) {
+				// 	console.log(msg[index]);
+				// }
 			};
 
 			conn.onerror = function(e) {
 				console.log('Соединение с обработчиком новостей не установлено');
 			}
 
-			// conn.onclose = function(e) {
+			conn.onclose = function(e) {
 			// 	console.log('Соединение не установлено. Переподключение через '+timeout/1000+' сек.');
-			// }
+			}
 		}
 
 		publishButton.addEventListener('click', publishNews);
@@ -167,10 +169,14 @@
 		function publishNews() {
 			var form = document.forms['form-news'];
 			if(form.action) {
-				var unique_id = guid();
-				form.elements['unique_id'].value = unique_id;
-				setCookie('unique_id', unique_id, {'expires': 5*60});
-				form.submit();
+				if(0 < form.elements['news'].value.length) {
+					var unique_id = guid();
+					form.elements['unique_id'].value = unique_id;
+					setCookie('unique_id', unique_id, {'expires': 2*60});
+					form.submit();
+				} else {
+					form.elements['news'].focus();
+				}
 			} else {
 				console.log('Не могу отправить данные. Не установлен обработчик формы');
 				return;
@@ -226,36 +232,6 @@
 				expires: -1
 			})
 		}
-
-		// function publishNews() {
-		// 	var newsTopic = getTopics(topic);
-
-		// 	var newsText = getNewsText(news);
-
-		// 	var message = {
-		// 		'topics': newsTopic,
-		// 		'news': newsText
-		// 	};
-
-		// 	console.log('Отправил новость: %o', message);
-
-		// 	conn.send( JSON.stringify(message) );
-		// }
-
-		// function getTopics(select) {
-		// 	var selectedTopics = [];
-		// 	for (var i = 0; i < select.options.length; i++) {
-		// 		var option = select.options[i];
-		// 		if(option.selected) {
-		// 			selectedTopics.push(option.value);
-		// 		}
-		// 	}
-		// 	return selectedTopics;
-		// }
-
-		// function getNewsText(textarea) {
-		// 	return textarea.value;
-		// }
 	</script>
 </body>
 </html>

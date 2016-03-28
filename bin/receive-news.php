@@ -29,9 +29,9 @@ $sub->subscribe('');
 $image_handler_tcp_list = new \SplObjectStorage();
 $news_handler_tcp_list = new \SplObjectStorage();
 
-$response_info = [];
-$image_deferred = [];
-$news_deferred = [];
+$response_data = [];
+// $image_deferred = [];
+// $news_deferred = [];
 
 // WS Server
 list($ip, $port) = explode(':', $argv[2]);
@@ -40,7 +40,7 @@ $webSock->listen($port, $ip);
 $webServer = new Ratchet\Server\IoServer(
 	new Ratchet\Http\HttpServer(
 		new Ratchet\WebSocket\WsServer(
-			new Microservices\Receive( $response_info )
+			new Microservices\Receive( $response_data )
 		)
 	),
 	$webSock
@@ -85,7 +85,7 @@ $address_isset = function($address, $node_list) {
 	return false;
 };
 
-$sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$news_handler_tcp_list, $address_isset, &$image_deferred, &$news_deferred) {
+$sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$news_handler_tcp_list, $address_isset, &$response_data) {
 	$msg = json_decode($msg);
 
 	if(('IMAGE HANDLER TCP' != $msg->cluster) && ('TEXT HANDLER TCP' != $msg->cluster)) {
@@ -103,20 +103,26 @@ $sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$ne
 			} else {
 				$dealer = $context->getSocket(\ZMQ::SOCKET_DEALER);
 				$dealer->connect('tcp://'.$address);
-				$dealer->on('message', function($msg) use (&$image_deferred) {
+				$dealer->on('message', function($msg) use (&$response_data) {
 					$msg = json_decode($msg);
-					if(isset($image_deferred[$msg->id])) {
+					if(isset($response_data[$msg->id]['image_deferred'])) {
 						if ($msg->error) {
-							if(isset($image_deferred[$msg->id])) {
-								$image_deferred[$msg->id]->reject('Изображение не сохранeно');
-							}
+							$message = [
+								'type' => 'image',
+								'error' => true,
+								'message' => 'Изображение не сохранено'
+							];
+							$response_data[$msg->id]['image_deferred']->reject( $message );
 						} else {
-							if(isset($image_deferred[$msg->id])) {
-								$image_deferred[$msg->id]->resolve($msg->path);
-							}
+							$message = [
+								'type' => 'image',
+								'error' => false,
+								'message' => 'Изображение сохранено. '.$msg->path
+							];
+							$response_data[$msg->id]['image_deferred']->resolve( $message );
 						}
 					} else {
-						printf('Сервер: не найден буфер для %s. При сохранении изображения'.PHP_EOL, $msg->id);
+						printf('Невозможно записать ответ на запрос %s в буфер. Буфер сообщений уже удалён. Долгая обработка изображения'.PHP_EOL, $msg->id);
 					}
 				});
 				$image_handler_tcp_list->attach($dealer, $address);
@@ -129,21 +135,26 @@ $sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$ne
 			} else {
 				$dealer = $context->getSocket(\ZMQ::SOCKET_DEALER);
 				$dealer->connect('tcp://'.$address);
-				$dealer->on('message', function($msg) use (&$news_deferred) {
+				$dealer->on('message', function($msg) use (&$response_data) {
 					$msg = json_decode($msg);
-					if(isset($news_deferred[$msg->id])) {
+					if(isset($response_data[$msg->id]['news_deferred'])) {
 						if ( 0 < count($msg->stop_words) ) {
-							if(isset($news_deferred[$msg->id])) {
-								$message = 'Запрещено использование следующих слов: ' . implode(', ', $msg->stop_words);
-								$news_deferred[$msg->id]->reject($message);
-							}
+							$message = [
+								'type' => 'news',
+								'error' => true,
+								'message' => 'Следующие слова запрещены: '. implode(', ', $msg->stop_words)
+							];
+							$response_data[$msg->id]['news_deferred']->reject( $message );
 						} else {
-							if(isset($news_deferred[$msg->id])) {
-								$news_deferred[$msg->id]->resolve('Нет стоп-слов');
-							}
+							$message = [
+								'type' => 'news',
+								'error' => false,
+								'message' => 'Нет стоп-слов'
+							];
+							$response_data[$msg->id]['news_deferred']->resolve( $message );
 						}
 					} else {
-						printf('Сервер: не найден буфер для %s. При обработке текста'.PHP_EOL, $msg->id);
+						printf('Невозможно записать ответ на запрос %s в буфер. Буфер сообщений уже удалён. Долгая обработка текста'.PHP_EOL, $msg->id);
 					}
 				});
 				$news_handler_tcp_list->attach($dealer, $address);
@@ -152,7 +163,7 @@ $sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$ne
 	}
 });
 
-$http->on('request', function (React\Http\Request $request, React\Http\Response $response) use ($loop, &$image_handler_tcp_list, &$news_handler_tcp_list, &$response_info, &$image_deferred, &$news_deferred) {
+$http->on('request', function (React\Http\Request $request, React\Http\Response $response) use ($loop, &$image_handler_tcp_list, &$news_handler_tcp_list, &$response_data) {
 	if('/send' == $request->getPath() && 'POST' == $request->getMethod()) {
 		$content_type = $request->getHeaders()['Content-Type'];
 		$boundary = explode('boundary=', $content_type)[1];
@@ -168,7 +179,7 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 					$response->end();
 			}
 		});
-		$request->on('end', function() use (&$requestBody, $boundary, $loop, &$image_handler_tcp_list, &$news_handler_tcp_list, &$response_info, &$image_deferred, &$news_deferred) {
+		$request->on('end', function() use (&$requestBody, $boundary, $loop, &$image_handler_tcp_list, &$news_handler_tcp_list, &$response_data) {
 			$mp = new Microservices\MultipartParser($requestBody, $boundary);
 			$mp->parse();
 
@@ -209,59 +220,56 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 
 			$image_stream = $mp->getFiles()['image']['stream'];
 			$original_name = $mp->getFiles()['image']['name'];
-			$size = $mp->getFiles()['image']['size'];
+			$image_size = $mp->getFiles()['image']['size'];
 
-			// !! TODO Если размер изображения равна 0, значт пользователь не отправил изображение и его сохранять не нужно
-
-			$response_info[$id] = [
+			$response_data[$id] = [
 				'user_connection' => null,
 				'buffer' => [],
-				// 'image_handle' => null,
-				// 'news_handle' => null
+				'image_deferred' => null,
+				'news_deferred' => null
 			];
 
-			// !! TODO Объеденить функции обработки
-
-			$image_news_response_handler = function($message) use (&$response_info, $id) {
-				array_push($response_info[$id]['buffer'], $message);
-				if($response_info[$id]['user_connection']) {
-					while(0 < count($response_info[$id]['buffer'])) {
-						$buffer_message = array_shift($response_info[$id]['buffer']);
-						$response_info[$id]['user_connection']->send( sprintf('Инициатива сервера: %s'.PHP_EOL, $buffer_message) );
-					}
-				}
+			$image_news_response_handler = function($msg) use (&$response_data, $id) {
+				array_push($response_data[$id]['buffer'], $msg['message']);
+				return $msg;
 			};
 
-			$image_deferred[$id] = new React\Promise\Deferred();
-			$image_deferred[$id]->promise()->then(
+			$image_deferred = new React\Promise\Deferred();
+			$image_promise = $image_deferred->promise()->then(
 				$image_news_response_handler,
 				$image_news_response_handler
 			);
+			$response_data[$id]['image_deferred'] = $image_deferred;
 
-			$news_deferred[$id] = new React\Promise\Deferred();
-			$news_deferred[$id]->promise()->then(
+			$news_deferred = new React\Promise\Deferred();
+			$news_promise = $news_deferred->promise()->then(
 				$image_news_response_handler,
 				$image_news_response_handler
 			);
+			$response_data[$id]['news_deferred'] = $news_deferred;
 
+			$all_promise[] = $news_promise;
+			if(0 == $image_size) {
+				$all_promise[] = React\Promise\resolve( ['type' => 'image', 'error' => false, 'message' => 'Передано пустое изображение'] )->then($image_news_response_handler);
+			} else {
+				$all_promise[] = $image_promise;
+			}
 
-			// $loop->addTimer(3, function() use (&$response_info, $id) {
-			// 	if(isset($response_info[$id])) {
-			// 		$response_info[$id]['user_connection'] = true;
-			// 		while(0 < count($response_info[$id]['buffer'])) {
-			// 			$msg = array_shift($response_info[$id]['buffer']);
-			// 			printf('По запросу пользователя: %s'.PHP_EOL, $msg);
-			// 		}
-			// 	} else {
-			// 		printf('Пользователь: не найден буфер для %s'.PHP_EOL, $id);
-			// 	}
-			// });
+			React\Promise\all($all_promise)->then(function($results) use (&$response_data, $id) {
+				// $error = false;
+				// $empty_image = false;
+				if(isset($response_data[$id]['user_connection'])) {
+					$message = json_encode($response_data[$id]['buffer']);
+					$response_data[$id]['user_connection']->send( $message );
+				}
+			});
 
-			// $loop->addTimer(4, function() use (&$response_info, $id, &$image_deferred, &$news_deferred){
-			// 	echo 'Удалён по таймеру: ', $id, PHP_EOL;
-			// 	unset($response_info[$id], $image_deferred[$id], $news_deferred[$id]);
-			// });
+			$loop->addTimer(2*60, function() use (&$response_data, $id){
+				printf('Буфер сообщений %s удалён. Истекло время жизни'.PHP_EOL, $id);
+				unset($response_data[$id]);
+			});
 
+			// отправка новости
 			$news = new \React\Stream\Stream($news_stream, $loop);
 			$news->bufferSize = 100;
 
@@ -288,42 +296,39 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 				$news_handler->send( json_encode($message) );
 			});
 
-			// изменил поток с php://memory на php://temp в React\Http\MultipartParser
-			$image = new \React\Stream\Stream($image_stream, $loop);
-			$image->bufferSize = 100;
+			// отправка изображения
+			if(0 != $image_size) {
+				$image = new \React\Stream\Stream($image_stream, $loop);
+				$image->bufferSize = 100;
 
-			$message = [
-				'type' => 'new',
-				'id' => $id,
-				'original_name' => $original_name
-			];
-			$image_handler->send( implode(POST_MESSAGE_DELIMITER, $message) );
-
-			$image->on('data', function($data) use ($id, $image_handler) {
 				$message = [
-					'type' => 'chunk',
+					'type' => 'new',
 					'id' => $id,
-					'data' => $data
+					'original_name' => $original_name
 				];
 				$image_handler->send( implode(POST_MESSAGE_DELIMITER, $message) );
-			});
 
-			$image->on('end', function() use ($id, $image_handler) {
-				$message = [
-					'type' => 'end',
-					'id' => $id
-				];
-				$image_handler->send( implode(POST_MESSAGE_DELIMITER, $message) );
-			});
+				$image->on('data', function($data) use ($id, $image_handler) {
+					$message = [
+						'type' => 'chunk',
+						'id' => $id,
+						'data' => $data
+					];
+					$image_handler->send( implode(POST_MESSAGE_DELIMITER, $message) );
+				});
+
+				$image->on('end', function() use ($id, $image_handler) {
+					$message = [
+						'type' => 'end',
+						'id' => $id
+					];
+					$image_handler->send( implode(POST_MESSAGE_DELIMITER, $message) );
+				});
+			}
 		});
 	} else {
 		$response->end();
 	}
-
-	// $timer = $loop->addTimer(5, function() use ($response) {
-	// 	$response->writeHead(408);
-	// 	$response->end('408 Request Timeout');
-	// });
 });
 
 $loop->run();

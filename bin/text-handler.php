@@ -61,11 +61,11 @@ $text_handler->on('messages', function($msg) use (&$news, $loop, $text_handler, 
 		$news[$msg->id] .= $msg->text;
 	} elseif('end' == $msg->type) {
 		// передача завершена
+		$news[$msg->id] = strtolower($news[$msg->id]);
 		$message = [
 			'id' => $msg->id,
 			'stop_words' => $check_stop_words( $news[$msg->id] )
 		];
-		sleep(3);
 		$text_handler->send([$from, json_encode($message)]);
 		unset($news[$msg->id]);
 	}
