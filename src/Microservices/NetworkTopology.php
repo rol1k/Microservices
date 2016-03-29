@@ -37,7 +37,7 @@ class NetworkTopology {
 		return isset($this->node_list->$cluster_name) ? true : false;
 	}
 
-	public function add_node($cluster_name, $address) {
+	public function add_node($cluster_name, $address, $name = null) {
 		if(!$this->contains_cluster($cluster_name)) {
 			return false;
 		}
@@ -45,7 +45,10 @@ class NetworkTopology {
 		$node_list = &$this->node_list->$cluster_name->nodes;
 		// адрес уникальный?
 		if(in_array($address, $node_list) === false) {
-			$node_list[] = $address;
+			$node = new \stdClass;
+			$node->address = $address;
+			$node->name = $name;
+			$node_list[] = $node;
 			return true;
 		} else {
 			return false;
@@ -59,32 +62,33 @@ class NetworkTopology {
 
 		$node_list = &$this->node_list->$cluster_name->nodes;
 
-		if(($id = array_search($address, $node_list)) !== false) {
-			unset($node_list[$id]);
-			return true;
-		} else {
-			return false;
+		foreach ($node_list as $key => $node) {
+			if($node->address == $address) {
+				unset($node_list[$key]);
+				return true;
+			}
 		}
+
+		return false;
 	}
 
 	public function get_list_node($cluster_name) {
 		if(!$this->contains_cluster($cluster_name)) {
 			return [];
 		} else {
-			$addresses = $this->node_list->$cluster_name->nodes;
-			return $addresses;
+			return $this->node_list->$cluster_name->nodes;
 		}
 	}
 
 	public function get_next_node($cluster_name) {
-		$addresses = &$this->node_list->$cluster_name->nodes;
-		if(!$this->contains_cluster($cluster_name) || count($addresses) < 1) {
+		$nodes = &$this->node_list->$cluster_name->nodes;
+		if(!$this->contains_cluster($cluster_name) || count($nodes) < 1) {
 			return null;
 		}
 
-		$firstElement = array_shift($addresses);
-		array_push($addresses, $firstElement);
-		return $firstElement;
+		$node = array_shift($nodes);
+		array_push($nodes, $node);
+		return $node;
 	}
 
 	public function get_description($cluster_name) {
