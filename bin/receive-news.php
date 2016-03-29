@@ -9,19 +9,28 @@
 // argv[1] - адрес Network Topology
 // argv[2] - собственный адрес WS
 // argv[3] - собственный адрес http
-// Пример вызова: php bin/receive-news.php 127.0.0.1:5500 127.0.0.1:5610 127.0.0.1:5600
+// argv[4] - адрес http сервера
+// Пример вызова: php bin/receive-news.php 127.0.0.1:5500 127.0.0.1:5610 127.0.0.1:5600 127.0.0.1:5400
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
 define('MESSAGE_DELIMITER', '|');
 define('POST_MESSAGE_DELIMITER', 'delimiter');
 
+$logger = new Monolog\Logger('receive news');
+$logger->pushHandler(new Monolog\Handler\StreamHandler('php://stdout', Monolog\Logger::DEBUG));
+$logger->addDebug( 'Server is running', ['TOPOLOGY' => $argv[1], 'RECEIVE WS' => $argv[2], 'RECEIVE HTTP' => $argv[3], 'HTTP SERVER' => $argv[4]] );
+
 $loop = React\EventLoop\Factory::create();
 $context = new React\ZMQ\Context($loop);
 
 $topology = $context->getSocket(ZMQ::SOCKET_DEALER);
 $topology->connect('tcp://'.$argv[1]);
-$topology->send( json_encode(['action' => 'get_topology_pub']) );
+$logger->addDebug( 'Сonnected to topology', [$argv[1]]);
+
+$message = ['action' => 'get_topology_pub'];
+$topology->send( json_encode($message) );
+$logger->addInfo( 'Request to topology', $message );
 
 $sub = $context->getSocket(\ZMQ::SOCKET_SUB);
 $sub->subscribe('');
@@ -30,8 +39,6 @@ $image_handler_tcp_list = new \SplObjectStorage();
 $news_handler_tcp_list = new \SplObjectStorage();
 
 $response_data = [];
-// $image_deferred = [];
-// $news_deferred = [];
 
 // WS Server
 list($ip, $port) = explode(':', $argv[2]);
@@ -40,36 +47,43 @@ $webSock->listen($port, $ip);
 $webServer = new Ratchet\Server\IoServer(
 	new Ratchet\Http\HttpServer(
 		new Ratchet\WebSocket\WsServer(
-			new Microservices\Receive( $response_data )
+			new Microservices\Receive( $response_data, $logger )
 		)
 	),
 	$webSock
 );
+$logger->addDebug( 'WS server is running', [$argv[2]] );
 
 // HTTP Server
 list($ip, $port) = explode(':', $argv[3]);
 $socket = new React\Socket\Server($loop);
 $http = new React\Http\Server($socket, $loop);
 $socket->listen($port, $ip);
+$logger->addDebug( 'HTTP server is running', [$argv[3]] );
 
-$topology->on('message', function ($msg) use ($sub, $loop, $argv, $topology) {
+$topology->on('message', function ($msg) use ($sub, $loop, $argv, $topology, $logger) {
 	$msg = json_decode($msg);
 
 	if('get_topology_pub' == $msg->action) {
 		$sub->connect('tcp://'.$msg->address);
-		$loop->addTimer(1, function() use ($topology, $argv){
+		$logger->addDebug( 'Сonnected to topology pub', [$msg->address] );
+		// дать время подсоедениться к topology pub
+		$loop->addTimer(1, function() use ($topology, $argv, $logger){
 			$message = [
 				'action' => 'add_node',
 				'cluster' => 'RECEIVE HTTP',
 				'address' => $argv[3]
 			];
 			$topology->send( json_encode($message) );
+			$logger->addInfo( 'Request to topology', [$message] );
+
 			$message = [
 				'action' => 'add_node',
 				'cluster' => 'RECEIVE WS',
 				'address' => $argv[2]
 			];
 			$topology->send( json_encode($message) );
+			$logger->addInfo( 'Request to topology', [$message] );
 		});
 	} elseif ('add_node' == $msg->action && $msg->error) {
 		//exit($msg->error_message);
@@ -85,10 +99,10 @@ $address_isset = function($address, $node_list) {
 	return false;
 };
 
-$sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$news_handler_tcp_list, $address_isset, &$response_data) {
+$sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$news_handler_tcp_list, $address_isset, &$response_data, $logger) {
 	$msg = json_decode($msg);
 
-	if(('IMAGE HANDLER TCP' != $msg->cluster) && ('TEXT HANDLER TCP' != $msg->cluster)) {
+	if(('IMAGE HANDLER TCP' != $msg->cluster) && ('NEWS HANDLER TCP' != $msg->cluster)) {
 		return;
 	}
 
@@ -103,58 +117,60 @@ $sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$ne
 			} else {
 				$dealer = $context->getSocket(\ZMQ::SOCKET_DEALER);
 				$dealer->connect('tcp://'.$address);
-				$dealer->on('message', function($msg) use (&$response_data) {
+				$logger->addDebug( 'Connected to image handler', [$address] );
+				$dealer->on('message', function($msg) use (&$response_data, $logger) {
 					$msg = json_decode($msg);
 					if(isset($response_data[$msg->id]['image_deferred'])) {
 						if ($msg->error) {
 							$message = [
 								'type' => 'image',
 								'error' => true,
-								'message' => 'Изображение не сохранено'
+								'message' => 'Image isn\'t saved'
 							];
 							$response_data[$msg->id]['image_deferred']->reject( $message );
 						} else {
 							$message = [
 								'type' => 'image',
 								'error' => false,
-								'message' => 'Изображение сохранено. '.$msg->path
+								'message' => 'Image is saved. '.$msg->path
 							];
 							$response_data[$msg->id]['image_deferred']->resolve( $message );
 						}
 					} else {
-						printf('Невозможно записать ответ на запрос %s в буфер. Буфер сообщений уже удалён. Долгая обработка изображения'.PHP_EOL, $msg->id);
+						$logger->addDebug( "Can't record the response in the buffer. A message buffer is already deleted. Long image processing", ['buffer id' => $msg->id] );
 					}
 				});
 				$image_handler_tcp_list->attach($dealer, $address);
 			}
 		}
-	} elseif('TEXT HANDLER TCP' == $msg->cluster) {
+	} elseif('NEWS HANDLER TCP' == $msg->cluster) {
 		foreach($msg->list_node as $address) {
 			if($address_isset($address, $news_handler_tcp_list)) {
 				continue;
 			} else {
 				$dealer = $context->getSocket(\ZMQ::SOCKET_DEALER);
 				$dealer->connect('tcp://'.$address);
-				$dealer->on('message', function($msg) use (&$response_data) {
+				$logger->addDebug( 'Connected to news handler', [$address] );
+				$dealer->on('message', function($msg) use (&$response_data, $logger) {
 					$msg = json_decode($msg);
 					if(isset($response_data[$msg->id]['news_deferred'])) {
 						if ( 0 < count($msg->stop_words) ) {
 							$message = [
 								'type' => 'news',
 								'error' => true,
-								'message' => 'Следующие слова запрещены: '. implode(', ', $msg->stop_words)
+								'message' => 'The following words are prohibited: '. implode(', ', $msg->stop_words)
 							];
 							$response_data[$msg->id]['news_deferred']->reject( $message );
 						} else {
 							$message = [
 								'type' => 'news',
 								'error' => false,
-								'message' => 'Нет стоп-слов'
+								'message' => 'No stop words'
 							];
 							$response_data[$msg->id]['news_deferred']->resolve( $message );
 						}
 					} else {
-						printf('Невозможно записать ответ на запрос %s в буфер. Буфер сообщений уже удалён. Долгая обработка текста'.PHP_EOL, $msg->id);
+						$logger->addDebug( "Can't record the response in the buffer. A message buffer is already deleted. Long text processing", ['buffer id' => $msg->id] );
 					}
 				});
 				$news_handler_tcp_list->attach($dealer, $address);
@@ -163,7 +179,7 @@ $sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$ne
 	}
 });
 
-$http->on('request', function (React\Http\Request $request, React\Http\Response $response) use ($loop, &$image_handler_tcp_list, &$news_handler_tcp_list, &$response_data) {
+$http->on('request', function (React\Http\Request $request, React\Http\Response $response) use ($loop, &$image_handler_tcp_list, &$news_handler_tcp_list, &$response_data, $argv, $logger) {
 	if('/send' == $request->getPath() && 'POST' == $request->getMethod()) {
 		$content_type = $request->getHeaders()['Content-Type'];
 		$boundary = explode('boundary=', $content_type)[1];
@@ -171,28 +187,57 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 		$headers=$request->getHeaders();
 		$contentLength=(int)$headers['Content-Length'];
 		$receivedData = 0;
-		$request->on('data',function($data) use ($request, $response, &$requestBody, &$receivedData, $contentLength) {
+		$request->on('data',function($data) use ($request, $response, &$requestBody, &$receivedData, $contentLength, $argv) {
 			$requestBody.=$data;
 			$receivedData+=strlen($data);
 			if ($receivedData>=$contentLength) {
-					$response->writeHead(301, ['Location' => 'http://127.0.0.1:5400/publish-news.html']);
+					$response->writeHead(301, ['Location' => 'http://' . $argv[4] . '/publish-news.html']);
 					$response->end();
 			}
 		});
-		$request->on('end', function() use (&$requestBody, $boundary, $loop, &$image_handler_tcp_list, &$news_handler_tcp_list, &$response_data) {
+		$request->on('end', function() use (&$requestBody, $boundary, $loop, &$image_handler_tcp_list, &$news_handler_tcp_list, &$response_data, $logger) {
 			$mp = new Microservices\MultipartParser($requestBody, $boundary);
 			$mp->parse();
 
-			// !! TODO Если все узлы обработки лежат, то сразу дать ответ пользователю
 			// !! TODO Добавить проверку типов загружаемых файлов
 
-			if(0 == count($image_handler_tcp_list)) {
-				echo 'Нет обработчиков изображений', PHP_EOL;
-				return;
-			}
+			$id = $mp->getPost()['unique_id'];
+			$topic = $mp->getPost()['topic'];
+			$news = $mp->getPost()['news'];
 
-			if(0 == count($news_handler_tcp_list)) {
-				echo 'Нет обработчиков текста', PHP_EOL;
+			$image_stream = $mp->getFiles()['image']['stream'];
+			$original_name = $mp->getFiles()['image']['name'];
+			$image_size = $mp->getFiles()['image']['size'];
+
+			$response_data[$id] = [
+				'user_connection' => null,
+				'buffer' => [],
+				'image_deferred' => null,
+				'news_deferred' => null
+			];
+
+			$loop->addTimer(2*60, function() use (&$response_data, $id, $logger){
+				unset($response_data[$id]);
+				$logger->addDebug( 'The message buffer is deleted. Timed out', ['buffer id' => $id]);
+			});
+
+			$push_buffer_message = function($msg) use (&$response_data, $id, $logger) {
+				array_push($response_data[$id]['buffer'], $msg['message']);
+				$logger->addInfo( 'Added a message in the buffer', ['buffer id' => $id, 'message' => $msg['message']] );
+				return $msg;
+			};
+
+			if(0 == count($image_handler_tcp_list) || 0 == count($news_handler_tcp_list)) {
+				if(0 == count($image_handler_tcp_list)) {
+					$message = 'No handlers images';
+					$push_buffer_message(['message' => $message]);
+					$logger->addError( $message );
+				}
+				if(0 == count($news_handler_tcp_list)) {
+					$message = 'No handlers text';
+					$push_buffer_message(['message' => $message]);
+					$logger->addError( $message );
+				}
 				return;
 			}
 
@@ -210,63 +255,39 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 			$news_handler = $news_handler_tcp_list->current();
 			$news_handler_tcp_list->next();
 
-			$id = $mp->getPost()['unique_id'];
-			$topic = $mp->getPost()['topic'];
-			$news = $mp->getPost()['news'];
-
 			$news_stream = fopen('php://temp/maxmemory:512000', 'r+');
 			fwrite($news_stream, $news);
 			fseek($news_stream, 0);
 
-			$image_stream = $mp->getFiles()['image']['stream'];
-			$original_name = $mp->getFiles()['image']['name'];
-			$image_size = $mp->getFiles()['image']['size'];
-
-			$response_data[$id] = [
-				'user_connection' => null,
-				'buffer' => [],
-				'image_deferred' => null,
-				'news_deferred' => null
-			];
-
-			$image_news_response_handler = function($msg) use (&$response_data, $id) {
-				array_push($response_data[$id]['buffer'], $msg['message']);
-				return $msg;
-			};
-
 			$image_deferred = new React\Promise\Deferred();
 			$image_promise = $image_deferred->promise()->then(
-				$image_news_response_handler,
-				$image_news_response_handler
+				$push_buffer_message,
+				$push_buffer_message
 			);
 			$response_data[$id]['image_deferred'] = $image_deferred;
 
 			$news_deferred = new React\Promise\Deferred();
 			$news_promise = $news_deferred->promise()->then(
-				$image_news_response_handler,
-				$image_news_response_handler
+				$push_buffer_message,
+				$push_buffer_message
 			);
 			$response_data[$id]['news_deferred'] = $news_deferred;
 
 			$all_promise[] = $news_promise;
 			if(0 == $image_size) {
-				$all_promise[] = React\Promise\resolve( ['type' => 'image', 'error' => false, 'message' => 'Передано пустое изображение'] )->then($image_news_response_handler);
+				$all_promise[] = React\Promise\resolve( ['type' => 'image', 'error' => false, 'message' => 'Passed an empty image'] )->then($push_buffer_message);
 			} else {
 				$all_promise[] = $image_promise;
 			}
 
-			React\Promise\all($all_promise)->then(function($results) use (&$response_data, $id) {
+			React\Promise\all($all_promise)->then(function($results) use (&$response_data, $id, $logger) {
 				// $error = false;
 				// $empty_image = false;
 				if(isset($response_data[$id]['user_connection'])) {
 					$message = json_encode($response_data[$id]['buffer']);
 					$response_data[$id]['user_connection']->send( $message );
+					$logger->addInfo( 'Sent a message to the user', [$response_data[$id]['buffer']]);
 				}
-			});
-
-			$loop->addTimer(2*60, function() use (&$response_data, $id){
-				printf('Буфер сообщений %s удалён. Истекло время жизни'.PHP_EOL, $id);
-				unset($response_data[$id]);
 			});
 
 			// отправка новости
@@ -278,6 +299,7 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 				'id' => $id
 			];
 			$news_handler->send( json_encode($message) );
+			$logger->addInfo( 'Sent the news to the processing', ['news id' => $id]);
 
 			$news->on('data', function($chunk) use ($id, $news_handler){
 				$message = [
@@ -307,6 +329,7 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 					'original_name' => $original_name
 				];
 				$image_handler->send( implode(POST_MESSAGE_DELIMITER, $message) );
+				$logger->addInfo( 'Sent the image to the processing', ['image id' => $id]);
 
 				$image->on('data', function($data) use ($id, $image_handler) {
 					$message = [

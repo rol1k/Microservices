@@ -69,7 +69,7 @@ class NetworkTopology {
 
 	public function get_list_node($cluster_name) {
 		if(!$this->contains_cluster($cluster_name)) {
-			return false;
+			return [];
 		} else {
 			$addresses = $this->node_list->$cluster_name->nodes;
 			return $addresses;
@@ -79,7 +79,7 @@ class NetworkTopology {
 	public function get_next_node($cluster_name) {
 		$addresses = &$this->node_list->$cluster_name->nodes;
 		if(!$this->contains_cluster($cluster_name) || count($addresses) < 1) {
-			return false;
+			return null;
 		}
 
 		$firstElement = array_shift($addresses);
