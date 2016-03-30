@@ -8,6 +8,7 @@
 
 require __DIR__.'/../vendor/autoload.php';
 
+// define('TIME_TO_CONNECT', 1);
 define('MESSAGE_DELIMITER', '|');
 
 $logger = new Monolog\Logger('text handler');
@@ -17,12 +18,13 @@ $logger->addDebug( 'Server is running', ['TOPOLOGY' => $argv[1], 'NEWS HANDLER T
 $loop = React\EventLoop\Factory::create();
 $context = new React\ZMQ\Context($loop);
 
-$topology = $context->getSocket(ZMQ::SOCKET_ROUTER);
+$topology = $context->getSocket(ZMQ::SOCKET_DEALER);
 $topology->connect('tcp://' . $argv[1]);
 $logger->addDebug( 'Сonnected to topology', [$argv[1]]);
 
 $text_handler = $context->getSocket(ZMQ::SOCKET_ROUTER);
 $text_handler_name = uniqid();
+echo $text_handler_name, PHP_EOL;
 $text_handler->setSockOpt(ZMQ::SOCKOPT_IDENTITY, $text_handler_name);
 $text_handler->bind('tcp://' . $argv[2]);
 
@@ -34,11 +36,12 @@ $message = [
 	'address' => $argv[2],
 	'name' => $text_handler_name
 ];
-$topology->send( ['topology', json_encode($message)] );
+$topology->send( json_encode($message) );
 $logger->addInfo( 'Request to topology', $message );
 
-$topology->on('messages', function ($msg) use ($loop, $argv, $topology) {
-	$msg = json_decode($msg[1]);
+
+$topology->on('message', function ($msg) use ($loop, $argv, $topology) {
+	$msg = json_decode($msg);
 
 	if ('add_node' == $msg->action && $msg->error) {
 		// exit($msg->error_message);

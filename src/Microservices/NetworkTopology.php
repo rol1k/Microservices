@@ -43,16 +43,18 @@ class NetworkTopology {
 		}
 
 		$node_list = &$this->node_list->$cluster_name->nodes;
-		// адрес уникальный?
-		if(in_array($address, $node_list) === false) {
-			$node = new \stdClass;
-			$node->address = $address;
-			$node->name = $name;
-			$node_list[] = $node;
-			return true;
-		} else {
-			return false;
+
+		foreach ($node_list as $key => $node) {
+			if($address == $node->address) {
+				return false;
+			}
 		}
+
+		$new_node = new \stdClass;
+		$new_node->address = $address;
+		$new_node->name = $name;
+		$node_list[] = $new_node;
+		return true;
 	}
 
 	public function remove_node($cluster_name, $address) {

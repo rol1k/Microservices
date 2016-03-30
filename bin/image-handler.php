@@ -7,6 +7,7 @@
 
 require __DIR__.'/../vendor/autoload.php';
 
+define('TIME_TO_CONNECT', 1);
 define('MESSAGE_DELIMITER', '|');
 define('POST_MESSAGE_DELIMITER', 'delimiter');
 
@@ -22,15 +23,18 @@ $topology->connect('tcp://' . $argv[1]);
 $logger->addDebug( 'Сonnected to topology', [$argv[1]]);
 
 $image_handler = $context->getSocket(ZMQ::SOCKET_ROUTER);
+$image_handler_name = uniqid();
+$image_handler->setSockOpt(ZMQ::SOCKOPT_IDENTITY, $image_handler_name);
 $image_handler->bind('tcp://' . $argv[2]);
 
 $images = [];
 $images_folder = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'http' . DIRECTORY_SEPARATOR . 'images' . DIRECTORY_SEPARATOR;
 
 $message = [
-	'action' => 'add_node',
+	'action'  => 'add_node',
 	'cluster' => 'IMAGE HANDLER TCP',
-	'address' => $argv[2]
+	'address' => $argv[2],
+	'name'    => $image_handler_name
 ];
 $topology->send( json_encode($message) );
 $logger->addInfo( 'Request to topology', $message );

@@ -14,6 +14,7 @@
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
+define('TIME_TO_CONNECT', 1);
 define('MESSAGE_DELIMITER', '|');
 define('POST_MESSAGE_DELIMITER', 'delimiter');
 
@@ -67,8 +68,8 @@ $topology->on('message', function ($msg) use ($sub, $loop, $argv, $topology, $lo
 	if('get_topology_pub' == $msg->action) {
 		$sub->connect('tcp://'.$msg->address);
 		$logger->addDebug( 'Сonnected to topology pub', [$msg->address] );
-		// дать время подсоедениться к topology pub
-		$loop->addTimer(1, function() use ($topology, $argv, $logger){
+
+		$loop->addTimer(TIME_TO_CONNECT, function() use ($topology, $argv, $logger){
 			$message = [
 				'action' => 'add_node',
 				'cluster' => 'RECEIVE HTTP',
@@ -92,7 +93,7 @@ $topology->on('message', function ($msg) use ($sub, $loop, $argv, $topology, $lo
 
 $address_isset = function($address, $node_list) {
 	foreach ($node_list as $node) {
-		if($address == $node_list->offsetGet($node)){
+		if($address == $node_list->offsetGet($node)->address){
 			return true;
 		}
 	}
@@ -111,15 +112,15 @@ $sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$ne
 	}
 
 	if('IMAGE HANDLER TCP' == $msg->cluster) {
-		foreach($msg->list_node as $address) {
-			if($address_isset($address, $image_handler_tcp_list)) {
+		foreach($msg->list_node as $node) {
+			if($address_isset($node->address, $image_handler_tcp_list)) {
 				continue;
 			} else {
-				$dealer = $context->getSocket(\ZMQ::SOCKET_DEALER);
-				$dealer->connect('tcp://'.$address);
-				$logger->addDebug( 'Connected to image handler', [$address] );
-				$dealer->on('message', function($msg) use (&$response_data, $logger) {
-					$msg = json_decode($msg);
+				$image_handler = $context->getSocket(\ZMQ::SOCKET_ROUTER);
+				$image_handler->connect('tcp://'.$node->address);
+				$logger->addDebug( 'Connected to image handler', [$node->address] );
+				$image_handler->on('messages', function($msg) use (&$response_data, $logger) {
+					$msg = json_decode($msg[1]);
 					if(isset($response_data[$msg->id]['image_deferred'])) {
 						if ($msg->error) {
 							$message = [
@@ -140,19 +141,19 @@ $sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$ne
 						$logger->addDebug( "Can't record the response in the buffer. A message buffer is already deleted. Long image processing", ['buffer id' => $msg->id] );
 					}
 				});
-				$image_handler_tcp_list->attach($dealer, $address);
+				$image_handler_tcp_list->attach($image_handler, $node);
 			}
 		}
 	} elseif('NEWS HANDLER TCP' == $msg->cluster) {
-		foreach($msg->list_node as $address) {
-			if($address_isset($address, $news_handler_tcp_list)) {
+		foreach($msg->list_node as $node) {
+			if($address_isset($node->address, $news_handler_tcp_list)) {
 				continue;
 			} else {
-				$dealer = $context->getSocket(\ZMQ::SOCKET_DEALER);
-				$dealer->connect('tcp://'.$address);
-				$logger->addDebug( 'Connected to news handler', [$address] );
-				$dealer->on('message', function($msg) use (&$response_data, $logger) {
-					$msg = json_decode($msg);
+				$news_handler = $context->getSocket(\ZMQ::SOCKET_ROUTER);
+				$news_handler->connect('tcp://'.$node->address);
+				$logger->addDebug( 'Connected to news handler', [$node->address] );
+				$news_handler->on('messages', function($msg) use (&$response_data, $logger) {
+					$msg = json_decode($msg[1]);
 					if(isset($response_data[$msg->id]['news_deferred'])) {
 						if ( 0 < count($msg->stop_words) ) {
 							$message = [
@@ -173,7 +174,7 @@ $sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$ne
 						$logger->addDebug( "Can't record the response in the buffer. A message buffer is already deleted. Long text processing", ['buffer id' => $msg->id] );
 					}
 				});
-				$news_handler_tcp_list->attach($dealer, $address);
+				$news_handler_tcp_list->attach($news_handler, $node);
 			}
 		}
 	}
@@ -246,6 +247,7 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 				$image_handler_tcp_list->rewind();
 			}
 			$image_handler = $image_handler_tcp_list->current();
+			$image_handler_name = $image_handler_tcp_list->offsetGet($image_handler)->name;
 			$image_handler_tcp_list->next();
 
 			// выбор обработчика текста round robin
@@ -253,6 +255,7 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 				$news_handler_tcp_list->rewind();
 			}
 			$news_handler = $news_handler_tcp_list->current();
+			$news_handler_name = $news_handler_tcp_list->offsetGet($news_handler)->name;
 			$news_handler_tcp_list->next();
 
 			$news_stream = fopen('php://temp/maxmemory:512000', 'r+');
@@ -298,24 +301,24 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 				'type' => 'new',
 				'id' => $id
 			];
-			$news_handler->send( json_encode($message) );
+			$news_handler->send( [$news_handler_name, json_encode($message)] );
 			$logger->addInfo( 'Sent the news to the processing', ['news id' => $id]);
 
-			$news->on('data', function($chunk) use ($id, $news_handler){
+			$news->on('data', function($chunk) use ($id, $news_handler, $news_handler_name){
 				$message = [
 					'type' => 'chunk',
 					'id' => $id,
 					'text' => $chunk
 				];
-				$news_handler->send( json_encode($message) );
+				$news_handler->send( [$news_handler_name, json_encode($message)] );
 			});
 
-			$news->on('end', function() use ($id, $news_handler) {
+			$news->on('end', function() use ($id, $news_handler, $news_handler_name) {
 				$message = [
 					'type' => 'end',
 					'id' => $id
 				];
-				$news_handler->send( json_encode($message) );
+				$news_handler->send( [$news_handler_name, json_encode($message)] );
 			});
 
 			// отправка изображения
@@ -328,24 +331,24 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 					'id' => $id,
 					'original_name' => $original_name
 				];
-				$image_handler->send( implode(POST_MESSAGE_DELIMITER, $message) );
+				$image_handler->send( [$image_handler_name, implode(POST_MESSAGE_DELIMITER, $message)] );
 				$logger->addInfo( 'Sent the image to the processing', ['image id' => $id]);
 
-				$image->on('data', function($data) use ($id, $image_handler) {
+				$image->on('data', function($data) use ($id, $image_handler, $image_handler_name) {
 					$message = [
 						'type' => 'chunk',
 						'id' => $id,
 						'data' => $data
 					];
-					$image_handler->send( implode(POST_MESSAGE_DELIMITER, $message) );
+					$image_handler->send( [$image_handler_name, implode(POST_MESSAGE_DELIMITER, $message)] );
 				});
 
-				$image->on('end', function() use ($id, $image_handler) {
+				$image->on('end', function() use ($id, $image_handler, $image_handler_name) {
 					$message = [
 						'type' => 'end',
 						'id' => $id
 					];
-					$image_handler->send( implode(POST_MESSAGE_DELIMITER, $message) );
+					$image_handler->send( [$image_handler_name, implode(POST_MESSAGE_DELIMITER, $message)] );
 				});
 			}
 		});

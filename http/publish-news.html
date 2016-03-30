@@ -117,14 +117,14 @@
 
 				if('RECEIVE HTTP' == msg.cluster) {
 					if(msg.next_node) {
-						document.forms['form-news'].action = 'http://' + msg.next_node + '/send';
+						document.forms['form-news'].action = 'http://' + msg.next_node.address + '/send';
 						console.log('Set form action to ' + document.forms['form-news'].action);
 					} else {
 						console.log('Нет работающих серверов http');
 					}
 				} else if('RECEIVE WS' == msg.cluster) {
 					if(msg.next_node) {
-						setConnection(msg.next_node);
+						setConnection(msg.next_node.address);
 					} else {
 						console.log('Нет работающих серверов ws');
 					}

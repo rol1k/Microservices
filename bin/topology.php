@@ -28,53 +28,57 @@ $context = new React\ZMQ\Context($loop);
 $pub = $context->getSocket(ZMQ::SOCKET_PUB);
 $pub->bind('tcp://' . TOPOLOGY_PUB_ADDRESS);
 
-$router = $context->getSocket(ZMQ::SOCKET_ROUTER);
-$router->bind('tcp://' . TOPOLOGY_ADDRESS);
+$topology = $context->getSocket(ZMQ::SOCKET_ROUTER);
+$topology->setSockOpt(ZMQ::SOCKOPT_IDENTITY, 'topology');
+$topology->bind('tcp://' . TOPOLOGY_ADDRESS);
 
-$add_node = function($action, $cluster, $address, $from) use ($router, $pub, $nt, $logger) {
-	if(false === $nt->add_node($cluster, $address)) {
+$add_node = function($action, $cluster, $address, $name, $from) use ($topology, $pub, $nt, $logger) {
+	if(false === $nt->add_node($cluster, $address, $name)) {
 		$message = [
 			'action' => $action,
 			'error' => true,
 			'error_message' => 'Address not added'
 		];
-		$logger->addDebug( 'Address not added', ['cluster' => $cluster, 'address' => $address] );
+		$logger->addDebug( 'Address not added', ['cluster' => $cluster, 'address' => $address, 'name' => $name] );
 	} else {
 		$message = [
 			'action' => $action,
 			'error' => false,
 			'error_message' => null
 		];
-		$logger->addDebug( 'Address added', ['cluster' => $cluster, 'address' => $address] );
+		$logger->addDebug( 'Address added', ['cluster' => $cluster, 'address' => $address, 'name' => $name] );
 	}
-	$logger->addInfo( 'Response to the node', ['node' => $from, 'message' => $message] );
-	$router->send( [$from, json_encode($message)] );
 
-	$message = [
-		'cluster' => $cluster,
-		'list_node' => $nt->get_list_node($cluster)
-	];
-	$pub->send( json_encode($message) );
-	$logger->addInfo( 'Notified subscribers about the new server', ['cluster' => $cluster, 'address' => $address]);
+	$logger->addInfo( 'Response to the node', ['node' => $from, 'message' => $message] );
+	$topology->send( [$from, json_encode($message)] );
+
+	foreach ($nt->get_clusters_name() as $cluster) {
+		$message = [
+			'cluster' => $cluster,
+			'list_node' => $nt->get_list_node($cluster)
+		];
+		$pub->send( json_encode($message) );
+	}
+	$logger->addInfo( 'Notified subscribers about the new server', ['cluster' => $cluster, 'address' => $address, 'name' => $name]);
 };
 
-$get_topology_pub = function($action, $from) use ($router, $logger) {
+$get_topology_pub = function($action, $from) use ($topology, $logger) {
 	$message = [
 		'action' => $action,
 		'address' => TOPOLOGY_PUB_ADDRESS
 	];
 	$logger->addInfo( 'Response to the node', ['node' => $from, 'message' => $message] );
-	$router->send( [$from, json_encode($message)] );
+	$topology->send( [$from, json_encode($message)] );
 };
 
-$router->on('messages', function ($msg) use ($loop, $router, $add_node, $get_topology_pub, $logger) {
+$topology->on('messages', function ($msg) use ($loop, $topology, $add_node, $get_topology_pub, $logger) {
 	$from = $msg[0];
 	$msg = json_decode($msg[1]);
 
 	$logger->addInfo( sprintf('Request from the node %s', $from), get_object_vars($msg) );
 
 	if('add_node' == $msg->action) {
-		$add_node($msg->action, $msg->cluster, $msg->address, $from);
+		$add_node($msg->action, $msg->cluster, $msg->address, isset($msg->name) ? $msg->name : null, $from);
 	} elseif('get_topology_pub' == $msg->action) {
 		$get_topology_pub($msg->action, $from);
 	} else {
@@ -84,7 +88,7 @@ $router->on('messages', function ($msg) use ($loop, $router, $add_node, $get_top
 		];
 		$logger->addWarning( "Action \"{$msg->action}\" not found", ['from' => $from] );
 		$logger->addInfo( 'Response to the node', ['node' => $from, 'message' => $message] );
-		$router->send( [$from, json_encode($message)] );
+		$topology->send( [$from, json_encode($message)] );
 	}
 });
 
