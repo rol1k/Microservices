@@ -4,13 +4,17 @@ use Ratchet\ConnectionInterface;
 use Ratchet\Wamp\WampServerInterface;
 
 class Pusher implements WampServerInterface {
+	public $logger;
+	public function __construct($logger) {
+		$this->logger = $logger;
+	}
 	/**
 	 * A lookup of all the topics clients have subscribed to
 	 */
 	protected $subscribedTopics = array();
 
 	public function onSubscribe(ConnectionInterface $conn, $topic) {
-		echo "Соединение ({$conn->resourceId}) подписалсось на \"{$topic}\"", PHP_EOL;
+		$this->logger->addDebug( "User ({$conn->resourceId}) subscribed to \"{$topic}\"");
 		$this->subscribedTopics[$topic->getId()] = $topic;
 	}
 
@@ -18,14 +22,14 @@ class Pusher implements WampServerInterface {
 	 * @param string JSON'ified string we'll receive from ZeroMQ
 	 */
 	public function onNewsEntry($entry) {
-		$entryData = json_decode($entry, true);
+		$entryData = json_decode($entry[1], true);
 
 		// If the lookup topic object isn't set there is no one to publish to
-		if (!array_key_exists($entryData['topics'][0], $this->subscribedTopics)) {
+		if (!array_key_exists($entryData['topic'], $this->subscribedTopics)) {
 			return;
 		}
 
-		$topic = $this->subscribedTopics[$entryData['topics'][0]];
+		$topic = $this->subscribedTopics[$entryData['topic']];
 
 		// re-send the data to all the clients subscribed to that category
 		$topic->broadcast($entryData);
@@ -34,10 +38,10 @@ class Pusher implements WampServerInterface {
 	public function onUnSubscribe(ConnectionInterface $conn, $topic) {}
 
 	public function onOpen(ConnectionInterface $conn) {
-		echo "Новое соединение ({$conn->resourceId})", PHP_EOL;
+		// echo "Новое соединение ({$conn->resourceId})", PHP_EOL;
 	}
 	public function onClose(ConnectionInterface $conn) {
-		echo "Соединение ({$conn->resourceId}) закрыто", PHP_EOL;
+		// echo "Соединение ({$conn->resourceId}) закрыто", PHP_EOL;
 	}
 	public function onCall(ConnectionInterface $conn, $id, $topic, array $params) {
 		// In this application if clients send data it's because the user hacked around in console
@@ -48,7 +52,7 @@ class Pusher implements WampServerInterface {
 		$conn->close();
 	}
 	public function onError(ConnectionInterface $conn, \Exception $e) {
-		echo "Ошибка: {$e->getMessage()}", PHP_EOL;
+		$this->logger->addError('Error '.$e->getMessage());
 		$conn->close();
 	}
 

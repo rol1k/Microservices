@@ -12,7 +12,7 @@ require __DIR__.'/../vendor/autoload.php';
 define('MESSAGE_DELIMITER', '|');
 
 $logger = new Monolog\Logger('text handler');
-$logger->pushHandler(new Monolog\Handler\StreamHandler('php://stdout', Monolog\Logger::DEBUG));
+$logger->pushHandler(new Monolog\Handler\StreamHandler('log.txt', Monolog\Logger::DEBUG));
 $logger->addDebug( 'Server is running', ['TOPOLOGY' => $argv[1], 'NEWS HANDLER TCP' => $argv[2]] );
 
 $loop = React\EventLoop\Factory::create();
@@ -24,7 +24,6 @@ $logger->addDebug( 'Сonnected to topology', [$argv[1]]);
 
 $text_handler = $context->getSocket(ZMQ::SOCKET_ROUTER);
 $text_handler_name = uniqid();
-echo $text_handler_name, PHP_EOL;
 $text_handler->setSockOpt(ZMQ::SOCKOPT_IDENTITY, $text_handler_name);
 $text_handler->bind('tcp://' . $argv[2]);
 
@@ -74,10 +73,10 @@ $text_handler->on('messages', function($msg) use (&$news, $loop, $text_handler, 
 		$news[$msg->id] .= $msg->text;
 	} elseif('end' == $msg->type) {
 		// передача завершена
-		$news[$msg->id] = strtolower($news[$msg->id]);
 		$message = [
 			'id' => $msg->id,
-			'stop_words' => $check_stop_words( $news[$msg->id] )
+			'stop_words' => $check_stop_words( strtolower($news[$msg->id]) ),
+			'news' => $news[$msg->id]
 		];
 		$text_handler->send([$from, json_encode($message)]);
 		$logger->addInfo( 'Response to the node', ['node' => $from, 'message' => $message] );

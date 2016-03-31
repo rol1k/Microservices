@@ -1,8 +1,8 @@
 <?php
-// http сервер
+// http сервер (unstable)
 // argv[1] - адрес Network Topology
 // argv[2] - собственный адрес http
-// Пример вызова: php bin/http-server.php 127.0.0.1:5400
+// Пример вызова: php bin/http-server.php 127.0.0.1:5400 > /dev/null
 
 use React\EventLoop\Factory;
 use React\Filesystem\Filesystem;

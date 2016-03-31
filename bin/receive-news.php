@@ -19,7 +19,7 @@ define('MESSAGE_DELIMITER', '|');
 define('POST_MESSAGE_DELIMITER', 'delimiter');
 
 $logger = new Monolog\Logger('receive news');
-$logger->pushHandler(new Monolog\Handler\StreamHandler('php://stdout', Monolog\Logger::DEBUG));
+$logger->pushHandler(new Monolog\Handler\StreamHandler('log.txt', Monolog\Logger::DEBUG));
 $logger->addDebug( 'Server is running', ['TOPOLOGY' => $argv[1], 'RECEIVE WS' => $argv[2], 'RECEIVE HTTP' => $argv[3], 'HTTP SERVER' => $argv[4]] );
 
 $loop = React\EventLoop\Factory::create();
@@ -36,8 +36,18 @@ $logger->addInfo( 'Request to topology', $message );
 $sub = $context->getSocket(\ZMQ::SOCKET_SUB);
 $sub->subscribe('');
 
+$connection = new React\MySQL\Connection($loop, array(
+	'host'   => '127.0.0.1',
+	'port'   => 3306,
+	'dbname' => 'microservices',
+	'user'   => 'root',
+	'passwd' => '123456',
+));
+$connection->connect(function () {});
+
 $image_handler_tcp_list = new \SplObjectStorage();
 $news_handler_tcp_list = new \SplObjectStorage();
+$publish_news_tcp_list = new \SplObjectStorage();
 
 $response_data = [];
 
@@ -100,10 +110,10 @@ $address_isset = function($address, $node_list) {
 	return false;
 };
 
-$sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$news_handler_tcp_list, $address_isset, &$response_data, $logger) {
+$sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$news_handler_tcp_list, &$publish_news_tcp_list, $address_isset, &$response_data, $logger) {
 	$msg = json_decode($msg);
 
-	if(('IMAGE HANDLER TCP' != $msg->cluster) && ('NEWS HANDLER TCP' != $msg->cluster)) {
+	if(('IMAGE HANDLER TCP' != $msg->cluster) && ('NEWS HANDLER TCP' != $msg->cluster) && ('PUBLISH TCP' != $msg->cluster)) {
 		return;
 	}
 
@@ -133,7 +143,8 @@ $sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$ne
 							$message = [
 								'type' => 'image',
 								'error' => false,
-								'message' => 'Image is saved. '.$msg->path
+								'message' => 'Image is saved. '.$msg->path,
+								'path' => $msg->path
 							];
 							$response_data[$msg->id]['image_deferred']->resolve( $message );
 						}
@@ -159,14 +170,16 @@ $sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$ne
 							$message = [
 								'type' => 'news',
 								'error' => true,
-								'message' => 'The following words are prohibited: '. implode(', ', $msg->stop_words)
+								'message' => 'The following words are prohibited: '. implode(', ', $msg->stop_words),
+								'news' => $msg->news
 							];
 							$response_data[$msg->id]['news_deferred']->reject( $message );
 						} else {
 							$message = [
 								'type' => 'news',
 								'error' => false,
-								'message' => 'No stop words'
+								'message' => 'No stop words',
+								'news' => $msg->news
 							];
 							$response_data[$msg->id]['news_deferred']->resolve( $message );
 						}
@@ -177,10 +190,21 @@ $sub->on('message', function($msg) use ($context, &$image_handler_tcp_list, &$ne
 				$news_handler_tcp_list->attach($news_handler, $node);
 			}
 		}
+	} elseif('PUBLISH TCP' == $msg->cluster) {
+		foreach($msg->list_node as $node) {
+			if($address_isset($node->address, $publish_news_tcp_list)) {
+				continue;
+			} else {
+				$publish_news = $context->getSocket(\ZMQ::SOCKET_ROUTER);
+				$publish_news->connect('tcp://'.$node->address);
+				$logger->addDebug( 'Connected to publish news', [$node->address] );
+				$publish_news_tcp_list->attach($publish_news, $node);
+			}
+		}
 	}
 });
 
-$http->on('request', function (React\Http\Request $request, React\Http\Response $response) use ($loop, &$image_handler_tcp_list, &$news_handler_tcp_list, &$response_data, $argv, $logger) {
+$http->on('request', function (React\Http\Request $request, React\Http\Response $response) use (&$connection, $loop, &$image_handler_tcp_list, &$news_handler_tcp_list, &$publish_news_tcp_list, &$response_data, $argv, $logger) {
 	if('/send' == $request->getPath() && 'POST' == $request->getMethod()) {
 		$content_type = $request->getHeaders()['Content-Type'];
 		$boundary = explode('boundary=', $content_type)[1];
@@ -196,7 +220,7 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 					$response->end();
 			}
 		});
-		$request->on('end', function() use (&$requestBody, $boundary, $loop, &$image_handler_tcp_list, &$news_handler_tcp_list, &$response_data, $logger) {
+		$request->on('end', function() use (&$connection, &$requestBody, $boundary, $loop, &$image_handler_tcp_list, &$news_handler_tcp_list, &$publish_news_tcp_list, &$response_data, $logger) {
 			$mp = new Microservices\MultipartParser($requestBody, $boundary);
 			$mp->parse();
 
@@ -213,6 +237,7 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 			$response_data[$id] = [
 				'user_connection' => null,
 				'buffer' => [],
+				'topic' => $topic,
 				'image_deferred' => null,
 				'news_deferred' => null
 			];
@@ -242,7 +267,6 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 				return;
 			}
 
-			// выбор обработчика изображений round robin
 			if ( !$image_handler_tcp_list->valid() ) {
 				$image_handler_tcp_list->rewind();
 			}
@@ -250,7 +274,6 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 			$image_handler_name = $image_handler_tcp_list->offsetGet($image_handler)->name;
 			$image_handler_tcp_list->next();
 
-			// выбор обработчика текста round robin
 			if ( !$news_handler_tcp_list->valid() ) {
 				$news_handler_tcp_list->rewind();
 			}
@@ -278,18 +301,54 @@ $http->on('request', function (React\Http\Request $request, React\Http\Response 
 
 			$all_promise[] = $news_promise;
 			if(0 == $image_size) {
-				$all_promise[] = React\Promise\resolve( ['type' => 'image', 'error' => false, 'message' => 'Passed an empty image'] )->then($push_buffer_message);
+				$all_promise[] = React\Promise\resolve( ['type' => 'image', 'error' => false, 'message' => 'Passed an empty image', 'path' => null] )->then($push_buffer_message);
 			} else {
 				$all_promise[] = $image_promise;
 			}
 
-			React\Promise\all($all_promise)->then(function($results) use (&$response_data, $id, $logger) {
-				// $error = false;
-				// $empty_image = false;
+			React\Promise\all($all_promise)->then(function($results) use (&$connection, &$response_data, &$publish_news_tcp_list, $id, $logger) {
 				if(isset($response_data[$id]['user_connection'])) {
 					$message = json_encode($response_data[$id]['buffer']);
 					$response_data[$id]['user_connection']->send( $message );
 					$logger->addInfo( 'Sent a message to the user', [$response_data[$id]['buffer']]);
+				}
+				if(!$results[0]['error'] && !$results[1]['error']) {
+					foreach ($results as $key => $result) {
+						if($result['type'] == 'image') {
+							$path = $result['path'];
+						} elseif($result['type'] == 'news') {
+							$news = $result['news'];
+						}
+					}
+
+					for($i = 0; $i < count($publish_news_tcp_list); $i++) {
+						if ( !$publish_news_tcp_list->valid() ) {
+							$publish_news_tcp_list->rewind();
+						}
+						$publish_news = $publish_news_tcp_list->current();
+						$publish_news_name = $publish_news_tcp_list->offsetGet($publish_news)->name;
+						$publish_news_tcp_list->next();
+
+						$time = date('H:i:s d.m.Y');
+
+						$message = [
+							'topic' => $response_data[$id]['topic'],
+							'path' => $path,
+							'news' => $news,
+							'time' => date('H:i:s d.m.Y')
+						];
+
+						$publish_news->send( [$publish_news_name, json_encode( $message )]);
+						$logger->addDebug('Sent message to publisher', ['message'=>$message]);
+
+						$connection->query("INSERT INTO `news` (`topic`, `text`, `image`, `time`) VALUES ('{$response_data[$id]['topic']}', '{$news}', '{$path}', '{$time}')", function ($command, $conn) use ($logger, $message) {
+							if ($command->hasError()) {
+								$logger->addError('Not saved to the database', ['message'=>$message]);
+							} else {
+								$logger->addDebug('Saved to the database', ['message'=>$message]);
+							}
+						});
+					}
 				}
 			});
 

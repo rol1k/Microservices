@@ -12,7 +12,7 @@ define('MESSAGE_DELIMITER', '|');
 define('POST_MESSAGE_DELIMITER', 'delimiter');
 
 $logger = new Monolog\Logger('image handler');
-$logger->pushHandler(new Monolog\Handler\StreamHandler('php://stdout', Monolog\Logger::DEBUG));
+$logger->pushHandler(new Monolog\Handler\StreamHandler('log.txt', Monolog\Logger::DEBUG));
 $logger->addDebug( 'Server is running', ['TOPOLOGY' => $argv[1], 'IMAGE HANDLER TCP' => $argv[2], 'HTTP SERVER' => $argv[3]]);
 
 $loop = React\EventLoop\Factory::create();

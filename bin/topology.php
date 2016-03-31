@@ -10,7 +10,7 @@ define('TOPOLOGY_PUB_ADDRESS', '127.0.0.1:5510');
 define('MESSAGE_DELIMITER', '|');
 
 $logger = new Monolog\Logger('topology');
-$logger->pushHandler(new Monolog\Handler\StreamHandler('php://stdout', Monolog\Logger::DEBUG));
+$logger->pushHandler(new Monolog\Handler\StreamHandler('log.txt', Monolog\Logger::DEBUG));
 $logger->addDebug('Server is running', ['TOPOLOGY' => TOPOLOGY_ADDRESS, 'TOPOLOGY_WS' => TOPOLOGY_WS_ADDRESS, 'TOPOLOGY_PUB' => TOPOLOGY_PUB_ADDRESS]);
 
 $nt = new Microservices\NetworkTopology;
