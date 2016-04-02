@@ -19,7 +19,7 @@ define('MESSAGE_DELIMITER', '|');
 define('POST_MESSAGE_DELIMITER', 'delimiter');
 
 $logger = new Monolog\Logger('receive news');
-$logger->pushHandler(new Monolog\Handler\StreamHandler('log.txt', Monolog\Logger::DEBUG));
+$logger->pushHandler(new Monolog\Handler\StreamHandler('bin/log.txt', Monolog\Logger::DEBUG));
 $logger->addDebug( 'Server is running', ['TOPOLOGY' => $argv[1], 'RECEIVE WS' => $argv[2], 'RECEIVE HTTP' => $argv[3], 'HTTP SERVER' => $argv[4]] );
 
 $loop = React\EventLoop\Factory::create();

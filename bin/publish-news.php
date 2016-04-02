@@ -11,7 +11,7 @@ require __DIR__.'/../vendor/autoload.php';
 define('MESSAGE_DELIMITER', '|');
 
 $logger = new Monolog\Logger('publish news');
-$logger->pushHandler(new Monolog\Handler\StreamHandler('log.txt', Monolog\Logger::DEBUG));
+$logger->pushHandler(new Monolog\Handler\StreamHandler('bin/log.txt', Monolog\Logger::DEBUG));
 $logger->addDebug( 'Server is running', ['TOPOLOGY' => $argv[1], 'PUBLISH TCP' => $argv[2]] );
 
 $loop = React\EventLoop\Factory::create();

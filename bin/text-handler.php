@@ -12,7 +12,7 @@ require __DIR__.'/../vendor/autoload.php';
 define('MESSAGE_DELIMITER', '|');
 
 $logger = new Monolog\Logger('text handler');
-$logger->pushHandler(new Monolog\Handler\StreamHandler('log.txt', Monolog\Logger::DEBUG));
+$logger->pushHandler(new Monolog\Handler\StreamHandler('bin/log.txt', Monolog\Logger::DEBUG));
 $logger->addDebug( 'Server is running', ['TOPOLOGY' => $argv[1], 'NEWS HANDLER TCP' => $argv[2]] );
 
 $loop = React\EventLoop\Factory::create();
