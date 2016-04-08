@@ -38,21 +38,6 @@
 		</div>
 	</div>
 
-<!-- 	<div class="container">
-		<div class="row">
-			<div class="col-xs-12">
-				<div id="alert-success" class="alert alert-success">
-					<button type="button" class="close" data-dismiss="alert" aria-hidden="true">&times;</button>
-					<span id="message-body-success">Успех!</span>
-				</div>
-				<div id="alert-danger" class="alert alert-danger">
-					<button type="button" class="close" data-dismiss="alert" aria-hidden="true">&times;</button>
-					<span id="message-body-danger">Фиаско!</span>
-				</div>
-			</div>
-		</div>
-	</div> -->
-
 	<div class="container">
 		<form name="form-news" method="POST" enctype="multipart/form-data">
 			<div class="form-group">
@@ -150,9 +135,6 @@
 			conn.onmessage = function(e) {
 				var msg = JSON.parse(e.data);
 				console.log(msg);
-				// for(var index in msg) {
-				// 	console.log(msg[index]);
-				// }
 			};
 
 			conn.onerror = function(e) {

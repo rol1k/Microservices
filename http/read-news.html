@@ -143,23 +143,10 @@
 					console.log('Нет работающих серверов ws');
 				}
 			}
-
-			// var msg = e.data;
-			// msg = msg.split('|');
-			// msg[1] = JSON.parse(msg[1]);
-			// if('getlistnode' == msg[0] && 0 < msg[1].length) {
-			// 	var address = msg[1][Math.floor(Math.random()*msg[1].length)];
-			// 	setConnection(address, 5000);
-			// 	conTopology.close();
-			// } else if('getlistnode' == msg[0]) {
-			// 	console.log('Нет работающих серверов');
-			// }
 		};
 
 		conTopology.onclose = function(e) {
 			console.log('Разорвано соединение с topology');
-			// console.log('Соединение не установлено. Переподключение через '+timeout/1000+' сек.');
-			//setTimeout(setConnection, timeout, address, timeout*2);
 		};
 	}
 
@@ -193,7 +180,7 @@
 			image = '<div><img class="img-responsive" width="80%" style="margin: 0 auto;" src="http://'+path+'"></div>'
 		}
 
-		newsColumn.innerHTML += '<div class="thumbnail"><div class="row"><div class="col-xs-8"><span class="label label-primary">'+topics[0]+'</span></div><div class="col-xs-4 text-right time">'+time+'</div></div><div class="row news-text"><div class="col-xs-12 text-justify">'+news+'</div>'+image+'</div></div>';
+		newsColumn.insertAdjacentHTML('afterBegin', '<div class="thumbnail"><div class="row"><div class="col-xs-8"><span class="label label-primary">'+topics[0]+'</span></div><div class="col-xs-4 text-right time">'+time+'</div></div><div class="row news-text"><div class="col-xs-12 text-justify">'+news+'</div>'+image+'</div></div>');
 	}
 	</script>
 </body>
